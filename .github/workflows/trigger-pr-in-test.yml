@@ -1,0 +1,82 @@
+name: Trigger PR in test2 on PR merge
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  trigger_pr_in_test2:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout test1 repo (current repo)
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # fetch full history to get diffs
+
+      - name: Set up GitHub CLI
+        run: |
+          if ! command -v gh &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y gh
+          fi
+
+      - name: Clone test2 repo
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          git clone https://x-access-token:${GITHUB_TOKEN}@github.com/Gokulakrishnan-k/test2.git
+          ls -la test2
+
+      - name: Copy changed files to test2 repo
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Prepare new branch in test2 repo
+          cd test2
+          BRANCH_NAME="auto-pr-from-test1-${PR_NUMBER}"
+          git checkout -b $BRANCH_NAME
+          cd ..
+
+          # Find changed files in test1 repo
+          CHANGED_FILES=$(git diff --name-only $BASE_SHA $HEAD_SHA)
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          # Copy changed files into test2 repo folder
+          for file in $CHANGED_FILES; do
+            echo "Copying $file to test2"
+            mkdir -p "test2/$(dirname $file)"
+            cp "$file" "test2/$file"
+          done
+
+      
+      - name: Commit and push changes in test2 repo
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          cd test2
+          BRANCH_NAME="auto-pr-from-test1-${PR_NUMBER}"
+      
+          # Set local git user info to avoid empty ident error
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+      
+          git add .
+          git commit -m "Sync changes from test1 PR #${PR_NUMBER}"
+          git push origin $BRANCH_NAME
+
+
+      - name: Create PR in test2 repo
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr create --repo Gokulakrishnan-k/test2 \
+            --head auto-pr-from-test1-${PR_NUMBER} \
+            --title "Auto PR triggered by merged PR #${PR_NUMBER} in test1" \
+            --body "This PR was automatically created after merging PR #${PR_NUMBER} in test1."
